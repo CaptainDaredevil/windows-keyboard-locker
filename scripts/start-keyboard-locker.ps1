@@ -12,6 +12,7 @@ if ($running.Count -gt 0) {
     exit 0
 }
 
+py $scriptPath --restore-accessibility-hotkeys | Out-Null
 Start-Process -FilePath $pythonwPath -ArgumentList "`"$scriptPath`"" -WorkingDirectory $projectRoot -WindowStyle Hidden
 Start-Sleep -Seconds 1
 

@@ -17,6 +17,7 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 
 py $scriptPath --write-state-stopped | Out-Null
+py $scriptPath --restore-accessibility-hotkeys | Out-Null
 
 Start-Process -FilePath $pythonwPath -ArgumentList "`"$scriptPath`"" -WorkingDirectory $projectRoot -WindowStyle Hidden
 

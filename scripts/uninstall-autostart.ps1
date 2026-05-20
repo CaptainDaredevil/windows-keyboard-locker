@@ -17,5 +17,6 @@ catch {
 
 Remove-ItemProperty -Path $runKeyPath -Name $runValueName -ErrorAction SilentlyContinue
 py $scriptPath --write-state-stopped | Out-Null
+py $scriptPath --restore-accessibility-hotkeys | Out-Null
 
 Write-Output "Removed autostart and stopped running keyboard locker instances."

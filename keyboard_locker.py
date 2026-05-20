@@ -14,15 +14,20 @@ import time
 import traceback
 
 
-APP_VERSION = "0.6.3"
+APP_VERSION = "0.6.4"
 LOCK_HOTKEY_SCAN_CODE = 38  # Physical "L" key on a standard layout.
 UNLOCK_SCAN_SEQUENCE = (22, 49, 38, 24, 46, 37)  # Physical U N L O C K keys.
 DEFAULT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keyboard_locker.log")
 DEFAULT_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keyboard_locker.state.json")
+DEFAULT_ACCESSIBILITY_BACKUP_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "keyboard_locker.accessibility_backup.json",
+)
 DEFAULT_MUTEX_NAME = "Local\\KeyboardLockerByCodex"
 MAX_LOG_BYTES = 1_000_000
 LOG_PATH = DEFAULT_LOG_PATH
 STATE_PATH = DEFAULT_STATE_PATH
+ACCESSIBILITY_BACKUP_PATH = DEFAULT_ACCESSIBILITY_BACKUP_PATH
 MUTEX_NAME = DEFAULT_MUTEX_NAME
 
 WH_KEYBOARD_LL = 13
@@ -181,6 +186,27 @@ def read_runtime_state() -> dict:
     return {}
 
 
+def read_json_file(path: str) -> dict:
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if isinstance(loaded, dict):
+            return loaded
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {}
+
+
+def write_json_file(path: str, payload: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temp_path = path + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=True, indent=2)
+    os.replace(temp_path, path)
+
+
 def build_runtime_state_payload(status: str, locked: bool, pid: int | None = None) -> dict:
     return {
         "version": APP_VERSION,
@@ -193,6 +219,90 @@ def build_runtime_state_payload(status: str, locked: bool, pid: int | None = Non
         "state_path": STATE_PATH,
         "mutex_name": MUTEX_NAME,
     }
+
+
+ACCESSIBILITY_REGISTRY = {
+    "StickyKeys": {
+        "path": r"Control Panel\Accessibility\StickyKeys",
+        "values": ["Flags"],
+    },
+    "KeyboardResponse": {
+        "path": r"Control Panel\Accessibility\Keyboard Response",
+        "values": ["Flags", "AutoRepeatDelay", "AutoRepeatRate", "BounceTime"],
+    },
+    "ToggleKeys": {
+        "path": r"Control Panel\Accessibility\ToggleKeys",
+        "values": ["Flags"],
+    },
+}
+
+
+def _normalize_registry_value(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    return str(value)
+
+
+def _disable_accessibility_flag(flag_value: str) -> str:
+    try:
+        numeric = int(str(flag_value))
+    except ValueError:
+        return str(flag_value)
+    return str(numeric & ~4)
+
+
+def capture_accessibility_state() -> dict:
+    import winreg
+
+    snapshot = {}
+    for section, config in ACCESSIBILITY_REGISTRY.items():
+        snapshot[section] = {}
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, config["path"]) as key:
+            for value_name in config["values"]:
+                value, _ = winreg.QueryValueEx(key, value_name)
+                snapshot[section][value_name] = _normalize_registry_value(value)
+    return snapshot
+
+
+def apply_accessibility_state(snapshot: dict) -> None:
+    import winreg
+
+    for section, values in snapshot.items():
+        config = ACCESSIBILITY_REGISTRY.get(section)
+        if not config:
+            continue
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, config["path"], 0, winreg.KEY_SET_VALUE) as key:
+            for value_name, value in values.items():
+                winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, str(value))
+
+
+def build_disabled_accessibility_state(snapshot: dict) -> dict:
+    disabled = json.loads(json.dumps(snapshot))
+    for section in ("StickyKeys", "KeyboardResponse", "ToggleKeys"):
+        if section in disabled and "Flags" in disabled[section]:
+            disabled[section]["Flags"] = _disable_accessibility_flag(disabled[section]["Flags"])
+    return disabled
+
+
+def disable_accessibility_hotkeys_with_backup() -> dict:
+    current = capture_accessibility_state()
+    write_json_file(ACCESSIBILITY_BACKUP_PATH, current)
+    apply_accessibility_state(build_disabled_accessibility_state(current))
+    return current
+
+
+def restore_accessibility_hotkeys_from_backup() -> bool:
+    backup = read_json_file(ACCESSIBILITY_BACKUP_PATH)
+    if not backup:
+        return False
+    apply_accessibility_state(backup)
+    try:
+        os.remove(ACCESSIBILITY_BACKUP_PATH)
+    except OSError:
+        pass
+    return True
 
 
 def get_running_instances() -> list[dict[str, str]]:
@@ -413,6 +523,7 @@ class KeyboardLocker:
         self.hook_proc = None
         self.mutex_handle = None
         self.registered_hotkey_ids: list[int] = []
+        self.accessibility_snapshot = {}
 
     def acquire_single_instance(self) -> None:
         self.mutex_handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
@@ -512,6 +623,7 @@ class KeyboardLocker:
         self.acquire_single_instance()
         atexit.register(self.release_single_instance)
 
+        self.accessibility_snapshot = disable_accessibility_hotkeys_with_backup()
         self.install_hook()
         self.publish_runtime_state(status="running", locked=False)
 
@@ -537,6 +649,7 @@ class KeyboardLocker:
             user32.DispatchMessageW(ctypes.byref(msg))
 
         self.uninstall_hook()
+        restore_accessibility_hotkeys_from_backup()
         self.publish_runtime_state(status="stopped", locked=self.state.locked)
 
 
@@ -876,6 +989,19 @@ def run_write_state_failed() -> int:
     return 0
 
 
+def run_disable_accessibility_hotkeys() -> int:
+    disable_accessibility_hotkeys_with_backup()
+    print(f"accessibility_backup_written={ACCESSIBILITY_BACKUP_PATH}")
+    print("accessibility_hotkeys=disabled")
+    return 0
+
+
+def run_restore_accessibility_hotkeys() -> int:
+    restored = restore_accessibility_hotkeys_from_backup()
+    print(f"accessibility_hotkeys_restored={'yes' if restored else 'no'}")
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
@@ -884,11 +1010,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--healthcheck", action="store_true")
     parser.add_argument("--write-state-stopped", action="store_true")
     parser.add_argument("--write-state-failed", action="store_true")
+    parser.add_argument("--disable-accessibility-hotkeys", action="store_true")
+    parser.add_argument("--restore-accessibility-hotkeys", action="store_true")
     parser.add_argument("--clear-log", action="store_true")
     parser.add_argument("--allow-injected", action="store_true")
     parser.add_argument("--trace-events", action="store_true")
     parser.add_argument("--log-path", default=DEFAULT_LOG_PATH)
     parser.add_argument("--state-path", default=DEFAULT_STATE_PATH)
+    parser.add_argument("--accessibility-backup-path", default=DEFAULT_ACCESSIBILITY_BACKUP_PATH)
     parser.add_argument("--mutex-name", default=DEFAULT_MUTEX_NAME)
     return parser.parse_args()
 
@@ -897,10 +1026,12 @@ def main() -> int:
     args = parse_args()
     global LOG_PATH
     global STATE_PATH
+    global ACCESSIBILITY_BACKUP_PATH
     global MUTEX_NAME
 
     LOG_PATH = os.path.abspath(args.log_path)
     STATE_PATH = os.path.abspath(args.state_path)
+    ACCESSIBILITY_BACKUP_PATH = os.path.abspath(args.accessibility_backup_path)
     MUTEX_NAME = args.mutex_name
 
     if args.clear_log and os.path.exists(LOG_PATH):
@@ -918,6 +1049,10 @@ def main() -> int:
         return run_write_state_stopped()
     if args.write_state_failed:
         return run_write_state_failed()
+    if args.disable_accessibility_hotkeys:
+        return run_disable_accessibility_hotkeys()
+    if args.restore_accessibility_hotkeys:
+        return run_restore_accessibility_hotkeys()
 
     locker = KeyboardLocker(
         allow_injected_physical=args.allow_injected,

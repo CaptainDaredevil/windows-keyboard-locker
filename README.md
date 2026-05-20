@@ -87,6 +87,15 @@ Uninstall autostart:
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-autostart.ps1
 ```
 
+## Emergency Recovery
+
+If the keyboard becomes unusable while the locker is active:
+
+- Double-click `PANIC-UNLOCK.vbs`
+- or double-click `PANIC-UNLOCK.bat`
+
+These files stop the running background locker process and force runtime state back to `stopped`.
+
 ## Testing
 
 Core self-test:

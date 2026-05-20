@@ -6,6 +6,7 @@ __pycache__/
 keyboard_locker.log
 keyboard_locker.log.1
 keyboard_locker.state.json
+keyboard_locker.accessibility_backup.json
 excalidraw.log
 
 .DS_Store
