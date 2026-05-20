@@ -38,6 +38,13 @@ WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
 WM_HOTKEY = 0x0312
 
+SPI_GETFILTERKEYS = 0x0032
+SPI_SETFILTERKEYS = 0x0033
+SPI_GETTOGGLEKEYS = 0x0034
+SPI_SETTOGGLEKEYS = 0x0035
+SPI_GETSTICKYKEYS = 0x003A
+SPI_SETSTICKYKEYS = 0x003B
+
 LLKHF_EXTENDED = 0x01
 LLKHF_INJECTED = 0x10
 
@@ -71,6 +78,23 @@ ALT_VKS = {VK_LMENU, VK_RMENU}
 TOP_ROW_VKS = [VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12]
 HOTKEY_ID_BASE = 1000
 
+SKF_AVAILABLE = 0x00000002
+SKF_HOTKEYACTIVE = 0x00000004
+SKF_CONFIRMHOTKEY = 0x00000008
+SKF_HOTKEYSOUND = 0x00000010
+
+TKF_AVAILABLE = 0x00000002
+TKF_HOTKEYACTIVE = 0x00000004
+TKF_CONFIRMHOTKEY = 0x00000008
+TKF_HOTKEYSOUND = 0x00000010
+
+FKF_AVAILABLE = 0x00000002
+FKF_HOTKEYACTIVE = 0x00000004
+FKF_CONFIRMHOTKEY = 0x00000008
+FKF_HOTKEYSOUND = 0x00000010
+FKF_INDICATOR = 0x00000020
+FKF_CLICKON = 0x00000040
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -98,6 +122,8 @@ user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wi
 user32.RegisterHotKey.restype = wintypes.BOOL
 user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.UnregisterHotKey.restype = wintypes.BOOL
+user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+user32.SystemParametersInfoW.restype = wintypes.BOOL
 
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
@@ -118,6 +144,31 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
         ("flags", wintypes.DWORD),
         ("time", wintypes.DWORD),
         ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class FILTERKEYS(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("dwFlags", wintypes.DWORD),
+        ("iWaitMSec", wintypes.DWORD),
+        ("iDelayMSec", wintypes.DWORD),
+        ("iRepeatMSec", wintypes.DWORD),
+        ("iBounceMSec", wintypes.DWORD),
+    ]
+
+
+class STICKYKEYS(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
+class TOGGLEKEYS(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("dwFlags", wintypes.DWORD),
     ]
 
 
@@ -268,6 +319,45 @@ def refresh_windows_accessibility_settings() -> None:
             pass
 
 
+def _spi_get_filterkeys() -> FILTERKEYS:
+    data = FILTERKEYS()
+    data.cbSize = ctypes.sizeof(FILTERKEYS)
+    if not user32.SystemParametersInfoW(SPI_GETFILTERKEYS, data.cbSize, ctypes.byref(data), 0):
+        raise OSError(f"SPI_GETFILTERKEYS failed with error {ctypes.get_last_error()}.")
+    return data
+
+
+def _spi_set_filterkeys(data: FILTERKEYS) -> None:
+    if not user32.SystemParametersInfoW(SPI_SETFILTERKEYS, data.cbSize, ctypes.byref(data), 0):
+        raise OSError(f"SPI_SETFILTERKEYS failed with error {ctypes.get_last_error()}.")
+
+
+def _spi_get_stickykeys() -> STICKYKEYS:
+    data = STICKYKEYS()
+    data.cbSize = ctypes.sizeof(STICKYKEYS)
+    if not user32.SystemParametersInfoW(SPI_GETSTICKYKEYS, data.cbSize, ctypes.byref(data), 0):
+        raise OSError(f"SPI_GETSTICKYKEYS failed with error {ctypes.get_last_error()}.")
+    return data
+
+
+def _spi_set_stickykeys(data: STICKYKEYS) -> None:
+    if not user32.SystemParametersInfoW(SPI_SETSTICKYKEYS, data.cbSize, ctypes.byref(data), 0):
+        raise OSError(f"SPI_SETSTICKYKEYS failed with error {ctypes.get_last_error()}.")
+
+
+def _spi_get_togglekeys() -> TOGGLEKEYS:
+    data = TOGGLEKEYS()
+    data.cbSize = ctypes.sizeof(TOGGLEKEYS)
+    if not user32.SystemParametersInfoW(SPI_GETTOGGLEKEYS, data.cbSize, ctypes.byref(data), 0):
+        raise OSError(f"SPI_GETTOGGLEKEYS failed with error {ctypes.get_last_error()}.")
+    return data
+
+
+def _spi_set_togglekeys(data: TOGGLEKEYS) -> None:
+    if not user32.SystemParametersInfoW(SPI_SETTOGGLEKEYS, data.cbSize, ctypes.byref(data), 0):
+        raise OSError(f"SPI_SETTOGGLEKEYS failed with error {ctypes.get_last_error()}.")
+
+
 def capture_accessibility_state() -> dict:
     import winreg
 
@@ -279,6 +369,27 @@ def capture_accessibility_state() -> dict:
                 value, _ = winreg.QueryValueEx(key, value_name)
                 snapshot[section][value_name] = _normalize_registry_value(value)
     return snapshot
+
+
+def capture_accessibility_spi_state() -> dict:
+    fk = _spi_get_filterkeys()
+    sk = _spi_get_stickykeys()
+    tk = _spi_get_togglekeys()
+    return {
+        "FilterKeys": {
+            "dwFlags": int(fk.dwFlags),
+            "iWaitMSec": int(fk.iWaitMSec),
+            "iDelayMSec": int(fk.iDelayMSec),
+            "iRepeatMSec": int(fk.iRepeatMSec),
+            "iBounceMSec": int(fk.iBounceMSec),
+        },
+        "StickyKeysSpi": {
+            "dwFlags": int(sk.dwFlags),
+        },
+        "ToggleKeysSpi": {
+            "dwFlags": int(tk.dwFlags),
+        },
+    }
 
 
 def apply_accessibility_state(snapshot: dict) -> None:
@@ -295,6 +406,32 @@ def apply_accessibility_state(snapshot: dict) -> None:
     refresh_windows_accessibility_settings()
 
 
+def apply_accessibility_spi_state(snapshot: dict) -> None:
+    fk_source = snapshot.get("FilterKeys", {})
+    fk = FILTERKEYS()
+    fk.cbSize = ctypes.sizeof(FILTERKEYS)
+    fk.dwFlags = int(fk_source.get("dwFlags", FKF_AVAILABLE))
+    fk.iWaitMSec = int(fk_source.get("iWaitMSec", 1000))
+    fk.iDelayMSec = int(fk_source.get("iDelayMSec", 1000))
+    fk.iRepeatMSec = int(fk_source.get("iRepeatMSec", 500))
+    fk.iBounceMSec = int(fk_source.get("iBounceMSec", 0))
+    _spi_set_filterkeys(fk)
+
+    sk_source = snapshot.get("StickyKeysSpi", {})
+    sk = STICKYKEYS()
+    sk.cbSize = ctypes.sizeof(STICKYKEYS)
+    sk.dwFlags = int(sk_source.get("dwFlags", SKF_AVAILABLE))
+    _spi_set_stickykeys(sk)
+
+    tk_source = snapshot.get("ToggleKeysSpi", {})
+    tk = TOGGLEKEYS()
+    tk.cbSize = ctypes.sizeof(TOGGLEKEYS)
+    tk.dwFlags = int(tk_source.get("dwFlags", TKF_AVAILABLE))
+    _spi_set_togglekeys(tk)
+
+    refresh_windows_accessibility_settings()
+
+
 def build_disabled_accessibility_state(snapshot: dict) -> dict:
     disabled = json.loads(json.dumps(snapshot))
     for section, flags_value in DISABLED_ACCESSIBILITY_FLAGS.items():
@@ -304,18 +441,48 @@ def build_disabled_accessibility_state(snapshot: dict) -> dict:
     return disabled
 
 
+def build_disabled_accessibility_spi_state(snapshot: dict) -> dict:
+    disabled = json.loads(json.dumps(snapshot))
+    if "FilterKeys" not in disabled:
+        disabled["FilterKeys"] = {}
+    disabled["FilterKeys"]["dwFlags"] = FKF_AVAILABLE
+    disabled["FilterKeys"]["iWaitMSec"] = 1000
+    disabled["FilterKeys"]["iDelayMSec"] = 1000
+    disabled["FilterKeys"]["iRepeatMSec"] = 500
+    disabled["FilterKeys"]["iBounceMSec"] = 0
+
+    if "StickyKeysSpi" not in disabled:
+        disabled["StickyKeysSpi"] = {}
+    disabled["StickyKeysSpi"]["dwFlags"] = SKF_AVAILABLE
+
+    if "ToggleKeysSpi" not in disabled:
+        disabled["ToggleKeysSpi"] = {}
+    disabled["ToggleKeysSpi"]["dwFlags"] = TKF_AVAILABLE
+
+    return disabled
+
+
 def disable_accessibility_hotkeys_with_backup() -> dict:
     current = capture_accessibility_state()
-    write_json_file(ACCESSIBILITY_BACKUP_PATH, current)
+    current_spi = capture_accessibility_spi_state()
+    backup_payload = {
+        "registry": current,
+        "spi": current_spi,
+    }
+    write_json_file(ACCESSIBILITY_BACKUP_PATH, backup_payload)
     apply_accessibility_state(build_disabled_accessibility_state(current))
-    return current
+    apply_accessibility_spi_state(build_disabled_accessibility_spi_state(current_spi))
+    return backup_payload
 
 
 def restore_accessibility_hotkeys_from_backup() -> bool:
     backup = read_json_file(ACCESSIBILITY_BACKUP_PATH)
     if not backup:
         return False
-    apply_accessibility_state(backup)
+    if "registry" in backup:
+        apply_accessibility_state(backup["registry"])
+    if "spi" in backup:
+        apply_accessibility_spi_state(backup["spi"])
     try:
         os.remove(ACCESSIBILITY_BACKUP_PATH)
     except OSError:
