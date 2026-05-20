@@ -14,7 +14,7 @@ import time
 import traceback
 
 
-APP_VERSION = "0.6.4"
+APP_VERSION = "0.6.5"
 LOCK_HOTKEY_SCAN_CODE = 38  # Physical "L" key on a standard layout.
 UNLOCK_SCAN_SEQUENCE = (22, 49, 38, 24, 46, 37)  # Physical U N L O C K keys.
 DEFAULT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keyboard_locker.log")
@@ -236,6 +236,12 @@ ACCESSIBILITY_REGISTRY = {
     },
 }
 
+DISABLED_ACCESSIBILITY_FLAGS = {
+    "StickyKeys": "506",
+    "KeyboardResponse": "122",
+    "ToggleKeys": "58",
+}
+
 
 def _normalize_registry_value(value):
     if isinstance(value, str):
@@ -243,15 +249,6 @@ def _normalize_registry_value(value):
     if isinstance(value, int):
         return str(value)
     return str(value)
-
-
-def _disable_accessibility_flag(flag_value: str) -> str:
-    try:
-        numeric = int(str(flag_value))
-    except ValueError:
-        return str(flag_value)
-    # Disable hotkey activation, confirmation prompts, and accessibility shortcut sounds.
-    return str(numeric & ~4 & ~8 & ~16)
 
 
 def refresh_windows_accessibility_settings() -> None:
@@ -300,9 +297,10 @@ def apply_accessibility_state(snapshot: dict) -> None:
 
 def build_disabled_accessibility_state(snapshot: dict) -> dict:
     disabled = json.loads(json.dumps(snapshot))
-    for section in ("StickyKeys", "KeyboardResponse", "ToggleKeys"):
-        if section in disabled and "Flags" in disabled[section]:
-            disabled[section]["Flags"] = _disable_accessibility_flag(disabled[section]["Flags"])
+    for section, flags_value in DISABLED_ACCESSIBILITY_FLAGS.items():
+        if section not in disabled:
+            disabled[section] = {}
+        disabled[section]["Flags"] = flags_value
     return disabled
 
 
