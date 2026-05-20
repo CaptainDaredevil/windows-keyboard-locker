@@ -250,7 +250,25 @@ def _disable_accessibility_flag(flag_value: str) -> str:
         numeric = int(str(flag_value))
     except ValueError:
         return str(flag_value)
-    return str(numeric & ~4)
+    # Disable hotkey activation, confirmation prompts, and accessibility shortcut sounds.
+    return str(numeric & ~4 & ~8 & ~16)
+
+
+def refresh_windows_accessibility_settings() -> None:
+    try:
+        user32.UpdatePerUserSystemParameters = user32.UpdatePerUserSystemParameters
+        user32.UpdatePerUserSystemParameters.argtypes = [wintypes.UINT]
+        user32.UpdatePerUserSystemParameters.restype = wintypes.BOOL
+        user32.UpdatePerUserSystemParameters(1)
+    except Exception:
+        try:
+            subprocess.run(
+                ["RUNDLL32.EXE", "USER32.DLL,UpdatePerUserSystemParameters", "1", "True"],
+                check=False,
+                capture_output=True,
+            )
+        except Exception:
+            pass
 
 
 def capture_accessibility_state() -> dict:
@@ -276,6 +294,8 @@ def apply_accessibility_state(snapshot: dict) -> None:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, config["path"], 0, winreg.KEY_SET_VALUE) as key:
             for value_name, value in values.items():
                 winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, str(value))
+
+    refresh_windows_accessibility_settings()
 
 
 def build_disabled_accessibility_state(snapshot: dict) -> dict:
