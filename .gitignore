@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+keyboard_locker.log
+keyboard_locker.log.1
+keyboard_locker.state.json
+excalidraw.log
+
+.DS_Store
+Thumbs.db
